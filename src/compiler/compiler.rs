@@ -63,7 +63,7 @@ struct AST {
 pub enum ParseError {
     #[error("Invalid instruction '{0}' at line {1}")]
     InvalidInstruction(String, usize),
-    #[error("{0} {1} {2}")]
+    #[error("{0} at line {1} found {2}")]
     ArgumentCountMismatchWithHint(String, usize, String),
     #[error("Unexpected number of arguments for '{0}' at line {1}")]
     ArgumentCountMismatch(String, usize),
@@ -99,6 +99,7 @@ impl Compiler {
         let mut nodes = Vec::new();
 
         for (line_number, line) in input.lines().enumerate() {
+            let line = line.split(";").next().unwrap().trim();
             let split = line.replace(",", "");
             let tokens: Vec<&str> = split.split_whitespace().collect();
             if tokens.is_empty() {
@@ -364,24 +365,39 @@ impl Compiler {
     fn register_map() -> HashMap<&'static str, u8> {
         HashMap::from([
             ("PORTA", 0x05),
-            ("PORTB", 0x06),   //
-            ("STATUS", 0x03),  //
-            ("TRISA", 0x85),   // PORTA data direction
-            ("TRISB", 0x86),   // PORTB data direction
-            ("PCL", 0x02),     // Program counter (PC) Least significant Byte
-            ("FSTATUS", 0xFD), // Example for additional registers
+            ("PORTB", 0x06),
+            ("TRISA", 0x85),
+            ("TRISB", 0x86),
+            ("STATUS", 0x03),
+            ("FSR", 0x04),
+            ("PCL", 0x02),
+            ("PCLATH", 0x0A),
+            ("INTCON", 0x0B),
+            ("OPTION_REG", 0x81),
+            ("TMR0", 0x01),
+            ("TMR1L", 0x0E),
+            ("TMR1H", 0x0F),
+            ("T1CON", 0x10),
+            ("TMR2", 0x11),
+            ("T2CON", 0x12),
+            ("EEDATA", 0x08),
+            ("EEADR", 0x09),
+            ("EECON1", 0x88),
+            ("EECON2", 0x89),
+            ("EEADRH", 0x10),
+            ("EEDATH", 0x11),
         ])
     }
+
     /// ✅ Pin Map for PORTA and PORTB
+    /// ✅ Pin Map for PORTA, PORTB, and Special Bits
     fn pin_map() -> HashMap<&'static str, u8> {
         HashMap::from([
-            // PORTA Pins (RA0 - RA4)
             ("RA0", 0),
             ("RA1", 1),
             ("RA2", 2),
             ("RA3", 3),
             ("RA4", 4),
-            // PORTB Pins (RB0 - RB7)
             ("RB0", 0),
             ("RB1", 1),
             ("RB2", 2),
@@ -390,25 +406,58 @@ impl Compiler {
             ("RB5", 5),
             ("RB6", 6),
             ("RB7", 7),
+            ("IRP", 7),
+            ("RP1", 6),
+            ("RP0", 5),
+            ("TO", 4),
+            ("PD", 3),
+            ("Z", 2),
+            ("DC", 1),
+            ("C", 0),
+            ("GIE", 7),
+            ("PEIE", 6),
+            ("T0IE", 5),
+            ("INTE", 4),
+            ("RBIE", 3),
+            ("T0IF", 2),
+            ("INTF", 1),
+            ("RBIF", 0),
+            ("PSA", 3),
+            ("T0SE", 4),
+            ("T0CS", 5),
+            ("INTEDG", 6),
+            ("RBPU", 7),
+            ("MCLR", 0),
+            ("VPP", 1),
+            ("OSC1", 2),
+            ("OSC2", 3),
+            ("PGC", 4),
+            ("PGD", 5),
+            ("PGM", 6),
         ])
     }
+
     /// ✅ Helper Functions
     fn parse_hex(value: &str, line: usize) -> Result<u8, ParseError> {
         let reg_map = Self::register_map();
         let pin_map = Self::pin_map();
-        // ✅ First, try to parse as a hexadecimal number
+
+        // 1️⃣ Try parsing as a hexadecimal number
         if let Ok(num) = u8::from_str_radix(value.trim_start_matches("0x"), 16) {
             return Ok(num);
         }
+
+        // 2️⃣ Check if it's a known pin (e.g., RA0, RB7)
         if let Some(&pin_addr) = pin_map.get(value.to_uppercase().as_str()) {
             return Ok(pin_addr);
         }
-        // ✅ If not a hex number, check if it's a known register name
+
+        // 3️⃣ Check if it's a known register (e.g., STATUS, TRISA)
         if let Some(&reg_addr) = reg_map.get(value.to_uppercase().as_str()) {
             return Ok(reg_addr);
         }
 
-        // ❌ Error if it's neither a valid hex nor a known register
+        // ❌ Unknown value
         Err(ParseError::InvalidRegister(value.to_string(), line + 1))
     }
 
@@ -420,20 +469,20 @@ impl Compiler {
     fn parse_dec(value: &str, line: usize, restrict_to_0_1: bool) -> Result<u8, ParseError> {
         let pin_map = Self::pin_map();
 
-        // ✅ First, check if the value matches a pin name (e.g., "RA0", "RB7")
+        // ✅ Check if the value matches a pin/bit name (e.g., "RP0", "RB7")
         if let Some(&pin) = pin_map.get(value.to_uppercase().as_str()) {
-            return Ok(pin); // Return the corresponding bit position
+            return Ok(pin);
         }
 
-        // ✅ Fallback: Parse as a regular decimal number
+        // ✅ Parse as a decimal number
         let num = u8::from_str(value).map_err(|_| ParseError::NumberParseError(line))?;
 
-        // ✅ Restrict the value if needed (for destination bits like `0` or `1`)
+        // ✅ Restrict to 0 or 1 when required
         if restrict_to_0_1 && num > 1 {
             return Err(ParseError::InvalidOperand(line));
         }
 
-        // ✅ Ensure bit values are within valid range (0-7)
+        // ✅ Ensure valid range for bit positions (0-7)
         if !restrict_to_0_1 && num > 7 {
             return Err(ParseError::InvalidOperand(line));
         }
