@@ -1,161 +1,300 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 use thiserror::Error;
 
-/// Represents the different PIC16F84 instructions
+/// ✅ Instruction Set
 #[derive(Debug, Clone)]
 enum Instruction {
-    // Byte-oriented File register operations
-    Movwf(u8), // Move W to file register DONE
-    Nop,       // No operation DONE
-    // TO-DO
-    Addwf(u8, u8),  // Add W and f
-    Andwf(u8, u8),  // AND W with F
-    Clrf(u8),       // CLear f
-    Clearw,         // Clear W
-    Comf(u8, u8),   // Complement f
-    Decf(u8, u8),   // Decrement f
-    Decfsz(u8, u8), // Decrement f skip if 0
-    Incf(u8, u8),   // Increment f
-    Incfsz(u8, u8), // Increment f skip if zero
-    Iorwf(u8, u8),  // Inclusive OR W with f
-    Rlf(u8, u8),    // Rotate left f through Carry
-    Rrf(u8, u8),    // ROtate right f through Carry
-    Subwf(u8, u8),  // Substract W from f
-    Swapf(u8, u8),  // Swap nibbles in f
-    Xorwf(u8, u8),  // Exclusive OR  W with f
+    // Byte-oriented File Register Operations
+    Movwf(u8),
+    Addwf(u8, u8),
+    Andwf(u8, u8),
+    Clrf(u8),
+    Clrw,
+    Comf(u8, u8),
+    Decf(u8, u8),
+    Decfsz(u8, u8),
+    Incf(u8, u8),
+    Incfsz(u8, u8),
+    Iorwf(u8, u8),
+    Rlf(u8, u8),
+    Rrf(u8, u8),
+    Subwf(u8, u8),
+    Swapf(u8, u8),
+    Xorwf(u8, u8),
+    Nop,
 
-    // Bit-oriented File registre
-    Bsf(u8, u8),   // Set bit in register DONE
-    Bcf(u8, u8),   // Clear bit in register  DONE
-    Btfsc(u8, u8), // Bit test f skip if CLear
-    Btfss(u8, u8), // bit test f skip if Set
+    // Bit-oriented File Register Operations
+    Bsf(u8, u8),
+    Bcf(u8, u8),
+    Btfsc(u8, u8),
+    Btfss(u8, u8),
 
-    // Literal and control operations
-    Addlw(u8), // Add literal to W DONE
-    Call(u16), // Call subroutine  DONE
-    Movlw(u8), // Load literal into W DONE
-    Return,    // Return from subroutine DONE
-    Andlw(u8), // And literal with W
-    Clrwdt,    // Clear watchdog timer
-    Goto(u8),  // GO to Address
-    Iorlw(u8), // inclusive OR literal with W
-    Retfie,    // Return form interrupt
-    Retlw(u8), // Return with literal in W
-    Sleep,     // Go into standby mode
-    Sublw(u8), // Substract W from literal
-    Xorlw(u8), // Exclusive OR Literal With W
+    // Literal and Control Operations
+    Addlw(u8),
+    Call(u16),
+    Movlw(u8),
+    Return,
+    Andlw(u8),
+    Clrwdt,
+    Goto(u16),
+    Iorlw(u8),
+    Retfie,
+    Retlw(u8),
+    Sleep,
+    Sublw(u8),
+    Xorlw(u8),
 }
 
-/// Represents a single node in the AST
+/// ✅ AST Representation
 #[derive(Debug, Clone)]
 struct ASTNode {
     instruction: Instruction,
     line_number: usize,
 }
 
-/// Holds the full AST of a program
 #[derive(Debug, Clone)]
 struct AST {
     nodes: Vec<ASTNode>,
 }
 
-/// Error handling for parsing issues
+/// ✅ Error Handling
 #[derive(Debug, Error)]
 pub enum ParseError {
     #[error("Invalid instruction '{0}' at line {1}")]
     InvalidInstruction(String, usize),
-
-    #[error("Missing or invalid argument at line {0}")]
-    InvalidArgument(usize),
-
+    #[error("{0} {1} {2}")]
+    ArgumentCountMismatchWithHint(String, usize, String),
     #[error("Unexpected number of arguments for '{0}' at line {1}")]
     ArgumentCountMismatch(String, usize),
-
     #[error("Failed to parse number at line {0}")]
     NumberParseError(usize),
+    #[error("Expected the operand to be either 0 or 1")]
+    InvalidOperand(usize),
+    #[error("Unknown register {0} at line {1}")]
+    InvalidRegister(String, usize),
 }
 
-/// Struct-based approach for the compiler
+/// ✅ Compiler Structure
 pub struct Compiler;
 
 impl Compiler {
-    /// Runs the compiler (main function to be called)
     pub fn run_compiler(input: &str) -> Result<Vec<u16>, ParseError> {
         match Self::parse_assembly(input) {
             Ok(ast) => {
                 println!("Parsed AST: {:#?}", ast);
                 let machine_code = Self::compile_to_machine_code(&ast);
                 println!("Machine Code: {:?}", machine_code);
-                Ok(machine_code) // Return the machine code on success
+                Ok(machine_code)
             }
             Err(e) => {
-                eprintln!("Error parsing assembly: {}", e); // Use eprintln for errors
-                Err(e) // Return the error
+                eprintln!("❌ Error parsing assembly: {}", e);
+                Err(e)
             }
         }
     }
 
-    /// Parses PIC assembly into an AST
+    /// ✅ Parsing PIC Assembly
     fn parse_assembly(input: &str) -> Result<AST, ParseError> {
         let mut nodes = Vec::new();
 
         for (line_number, line) in input.lines().enumerate() {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-
+            let split = line.replace(",", "");
+            let tokens: Vec<&str> = split.split_whitespace().collect();
             if tokens.is_empty() {
                 continue;
-            } // Skip empty lines
+            }
+            print!("{:?}", tokens);
+            if tokens.len() != Self::match_tokens_len(&tokens).unwrap_or(0) {
+                let hint = Self::generate_hint(tokens[0])
+                    .unwrap_or_else(|| "No hints available.".to_string());
+                return Err(ParseError::ArgumentCountMismatchWithHint(
+                    tokens[0].to_string(),
+                    line_number + 1,
+                    hint,
+                ));
+            }
 
-            let instruction = match tokens[0] {
-                "MOVLW" if tokens.len() == 2 => {
-                    let value = Self::parse_hex(tokens[1], line_number)?;
-                    Instruction::Movlw(value)
+            let instruction = match tokens[0].to_uppercase().as_str() {
+                // Byte-oriented Operations
+                "MOVWF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Movwf(Self::parse_hex(tokens[1], line_number)?)
                 }
-                "MOVWF" if tokens.len() == 2 => {
-                    let value = Self::parse_hex(tokens[1], line_number)?;
-                    Instruction::Movwf(value)
+                "ADDWF" => {
+                    Self::check_arg(&tokens, line_number)?;
+                    Instruction::Addwf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
                 }
-                "ADDLW" if tokens.len() == 2 => {
-                    let value = Self::parse_hex(tokens[1], line_number)?;
-                    Instruction::Addlw(value)
+                "ANDWF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Andwf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
                 }
-                "BSF" if tokens.len() == 3 => {
-                    let reg = Self::parse_hex(tokens[1], line_number)?;
-                    let bit = Self::parse_dec(tokens[2], line_number)?;
-                    Instruction::Bsf(reg, bit)
+                "CLRF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Clrf(Self::parse_hex(tokens[1], line_number)?)
                 }
-                "BCF" if tokens.len() == 3 => {
-                    let reg = Self::parse_hex(tokens[1], line_number)?;
-                    let bit = Self::parse_dec(tokens[2], line_number)?;
-                    Instruction::Bcf(reg, bit)
+                "CLRW" => {
+                    print!("{:?}", tokens.len());
+                    Instruction::Clrw
                 }
-                "CALL" if tokens.len() == 2 => {
-                    let addr = Self::parse_hex16(tokens[1], line_number)?;
-                    Instruction::Call(addr)
+                "COMF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Comf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
                 }
-                "ADDWF" if tokens.len() == 3 => {
-                    let reg = Self::parse_hex(tokens[1], line_number)?; // File register
-                    let dest = Self::parse_dec(tokens[2], line_number)?; // Destination (0 = W, 1 = f)
-                    Instruction::Addwf(reg, dest)
-                }
-                "CLRF" if tokens.len() == 2 => {
-                    let f = Self::parse_hex(tokens[1], line_number)?;
-                    Instruction::Clrf(f)
-                }
-                "ANDLW" if tokens.len() == 2 => {
-                    let f = Self::parse_hex(tokens[1], line_number)?;
-                    Instruction::Andlw(f)
-                }
-                "RETURN" if tokens.len() == 1 => Instruction::Return,
-                "NOP" if tokens.len() == 1 => Instruction::Nop,
+                "DECF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
 
-                _ if tokens.len() < 2 => return Err(ParseError::InvalidArgument(line_number + 1)),
-                _ if tokens.len() > 3 => {
-                    return Err(ParseError::ArgumentCountMismatch(
-                        tokens[0].to_string(),
-                        line_number + 1,
-                    ))
+                    Instruction::Decf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
                 }
+                "DECFSZ" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Decfsz(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "INCF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Incf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "INCFSZ" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Incfsz(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "IORWF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Iorwf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "RLF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Rlf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "RRF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Rrf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "SUBWF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Subwf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "SWAPF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Swapf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "XORWF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Xorwf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, true)?,
+                    )
+                }
+                "NOP" => Instruction::Nop,
+
+                // Bit-oriented Operations
+                "BSF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Bsf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, false)?,
+                    )
+                }
+                "BCF" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Bcf(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, false)?,
+                    )
+                }
+                "BTFSC" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Btfsc(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, false)?,
+                    )
+                }
+                "BTFSS" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Btfss(
+                        Self::parse_hex(tokens[1], line_number)?,
+                        Self::parse_dec(tokens[2], line_number, false)?,
+                    )
+                }
+
+                // Literal and Control Operations
+                "ADDLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Addlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "CALL" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Call(Self::parse_hex16(tokens[1], line_number)?)
+                }
+                "MOVLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Movlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "RETURN" => Instruction::Return,
+                "ANDLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Andlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "CLRWDT" => Instruction::Clrwdt,
+                "GOTO" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Goto(Self::parse_hex16(tokens[1], line_number)?)
+                }
+                "IORLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Iorlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "RETFIE" => Instruction::Retfie,
+                "RETLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Retlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "SLEEP" => Instruction::Sleep,
+                "SUBLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Sublw(Self::parse_hex(tokens[1], line_number)?)
+                }
+                "XORLW" => {
+                    Self::check_arg(&tokens, line_number + 1)?;
+                    Instruction::Xorlw(Self::parse_hex(tokens[1], line_number)?)
+                }
+
                 _ => {
                     return Err(ParseError::InvalidInstruction(
                         tokens[0].to_string(),
@@ -173,46 +312,196 @@ impl Compiler {
         Ok(AST { nodes })
     }
 
-    /// Converts AST into machine code
+    /// ✅ Machine Code Generation (encoding fixes applied)
     fn compile_to_machine_code(ast: &AST) -> Vec<u16> {
-        let mut machine_code = Vec::new();
-
-        for node in &ast.nodes {
-            let opcode = match node.instruction {
-                Instruction::Movlw(lit) => 0x3000 | (lit as u16),
+        ast.nodes
+            .iter()
+            .map(|node| match node.instruction {
+                // Byte-oriented Instructions
                 Instruction::Movwf(f) => 0x0080 | (f as u16),
-                Instruction::Addlw(lit) => 0x3E00 | (lit as u16),
+                Instruction::Addwf(f, d) => 0x0700 | ((d as u16) << 8) | (f as u16),
+                Instruction::Andwf(f, d) => 0x0500 | ((d as u16) << 8) | (f as u16),
+                Instruction::Clrf(f) => 0x0180 | (f as u16),
+                Instruction::Clrw => 0x0100,
+                Instruction::Comf(f, d) => 0x0900 | ((d as u16) << 8) | (f as u16),
+                Instruction::Decf(f, d) => 0x0300 | ((d as u16) << 8) | (f as u16),
+                Instruction::Decfsz(f, d) => 0x0B00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Incf(f, d) => 0x0A00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Incfsz(f, d) => 0x0F00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Iorwf(f, d) => 0x0400 | ((d as u16) << 8) | (f as u16),
+                Instruction::Rlf(f, d) => 0x0D00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Rrf(f, d) => 0x0C00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Subwf(f, d) => 0x0200 | ((d as u16) << 8) | (f as u16),
+                Instruction::Swapf(f, d) => 0x0E00 | ((d as u16) << 8) | (f as u16),
+                Instruction::Xorwf(f, d) => 0x0600 | ((d as u16) << 8) | (f as u16),
+                Instruction::Nop => 0x0000,
+
+                // Bit-oriented Instructions
                 Instruction::Bsf(f, b) => 0x1400 | ((f as u16) << 5) | (b as u16),
                 Instruction::Bcf(f, b) => 0x1000 | ((f as u16) << 5) | (b as u16),
-                Instruction::Call(addr) => 0x2000 | (addr & 0x7FF),
-                Instruction::Return => 0x0008,
-                Instruction::Nop => 0x0000,
-                Instruction::Addwf(f, d) => 0x0700 | ((d as u16) << 8) | (f as u16),
-                Instruction::Clrf(f) => 0x180 | (f as u16),
-                Instruction::Andlw(f) => 0x3900 | (f as u16),
-                _ => todo!(),
-            };
+                Instruction::Btfsc(f, b) => 0x1800 | ((f as u16) << 5) | (b as u16),
+                Instruction::Btfss(f, b) => 0x1C00 | ((f as u16) << 5) | (b as u16),
 
-            machine_code.push(opcode);
+                // Literal & Control Operations
+                Instruction::Addlw(lit) => 0x3E00 | (lit as u16),
+                Instruction::Call(addr) => 0x2000 | (addr & 0x7FF),
+                Instruction::Movlw(lit) => 0x3000 | (lit as u16),
+                Instruction::Return => 0x0008,
+                Instruction::Andlw(lit) => 0x3900 | (lit as u16),
+                Instruction::Clrwdt => 0x0064,
+                Instruction::Goto(addr) => 0x2800 | (addr & 0x7FF),
+                Instruction::Iorlw(lit) => 0x3800 | (lit as u16),
+                Instruction::Retfie => 0x0009,
+                Instruction::Retlw(lit) => 0x3400 | (lit as u16),
+                Instruction::Sleep => 0x0063,
+                Instruction::Sublw(lit) => 0x3C00 | (lit as u16),
+                Instruction::Xorlw(lit) => 0x3A00 | (lit as u16),
+            })
+            .collect()
+    }
+
+    /// Register Map for Special Function Registers
+    fn register_map() -> HashMap<&'static str, u8> {
+        HashMap::from([
+            ("PORTA", 0x05),
+            ("PORTB", 0x06),   //
+            ("STATUS", 0x03),  //
+            ("TRISA", 0x85),   // PORTA data direction
+            ("TRISB", 0x86),   // PORTB data direction
+            ("PCL", 0x02),     // Program counter (PC) Least significant Byte
+            ("FSTATUS", 0xFD), // Example for additional registers
+        ])
+    }
+    /// ✅ Pin Map for PORTA and PORTB
+    fn pin_map() -> HashMap<&'static str, u8> {
+        HashMap::from([
+            // PORTA Pins (RA0 - RA4)
+            ("RA0", 0),
+            ("RA1", 1),
+            ("RA2", 2),
+            ("RA3", 3),
+            ("RA4", 4),
+            // PORTB Pins (RB0 - RB7)
+            ("RB0", 0),
+            ("RB1", 1),
+            ("RB2", 2),
+            ("RB3", 3),
+            ("RB4", 4),
+            ("RB5", 5),
+            ("RB6", 6),
+            ("RB7", 7),
+        ])
+    }
+    /// ✅ Helper Functions
+    fn parse_hex(value: &str, line: usize) -> Result<u8, ParseError> {
+        let reg_map = Self::register_map();
+        let pin_map = Self::pin_map();
+        // ✅ First, try to parse as a hexadecimal number
+        if let Ok(num) = u8::from_str_radix(value.trim_start_matches("0x"), 16) {
+            return Ok(num);
+        }
+        if let Some(&pin_addr) = pin_map.get(value.to_uppercase().as_str()) {
+            return Ok(pin_addr);
+        }
+        // ✅ If not a hex number, check if it's a known register name
+        if let Some(&reg_addr) = reg_map.get(value.to_uppercase().as_str()) {
+            return Ok(reg_addr);
         }
 
-        machine_code
+        // ❌ Error if it's neither a valid hex nor a known register
+        Err(ParseError::InvalidRegister(value.to_string(), line + 1))
     }
 
-    /// Parses an 8-bit hexadecimal value
-    fn parse_hex(value: &str, line: usize) -> Result<u8, ParseError> {
-        u8::from_str_radix(value.trim_start_matches("0x"), 16)
-            .map_err(|_| ParseError::NumberParseError(line))
-    }
-
-    /// Parses a 16-bit hexadecimal value
     fn parse_hex16(value: &str, line: usize) -> Result<u16, ParseError> {
         u16::from_str_radix(value.trim_start_matches("0x"), 16)
             .map_err(|_| ParseError::NumberParseError(line))
     }
 
-    /// Parses a decimal value
-    fn parse_dec(value: &str, line: usize) -> Result<u8, ParseError> {
-        u8::from_str(value).map_err(|_| ParseError::NumberParseError(line))
+    fn parse_dec(value: &str, line: usize, restrict_to_0_1: bool) -> Result<u8, ParseError> {
+        let pin_map = Self::pin_map();
+
+        // ✅ First, check if the value matches a pin name (e.g., "RA0", "RB7")
+        if let Some(&pin) = pin_map.get(value.to_uppercase().as_str()) {
+            return Ok(pin); // Return the corresponding bit position
+        }
+
+        // ✅ Fallback: Parse as a regular decimal number
+        let num = u8::from_str(value).map_err(|_| ParseError::NumberParseError(line))?;
+
+        // ✅ Restrict the value if needed (for destination bits like `0` or `1`)
+        if restrict_to_0_1 && num > 1 {
+            return Err(ParseError::InvalidOperand(line));
+        }
+
+        // ✅ Ensure bit values are within valid range (0-7)
+        if !restrict_to_0_1 && num > 7 {
+            return Err(ParseError::InvalidOperand(line));
+        }
+
+        Ok(num)
+    }
+
+    fn generate_hint(instruction: &str) -> Option<String> {
+        match instruction.to_uppercase().as_str() {
+            // Byte-oriented File Register Operations
+            "MOVWF" => Some("\nHint: Use 'MOVWF <file_register>'. Example: MOVWF 0x0C".to_string()),
+            "ADDWF" => Some("\nHint: Use 'ADDWF <f>, <d>'. Example: ADDWF 0x1F, 1".to_string()),
+            "CLRF" => Some("\nHint: Use 'CLRF <file_register>'. Example: CLRF 0x0D".to_string()),
+
+            // Bit-oriented File Register Operations
+            "BSF" => {
+                Some("\nHint: Use 'BSF <file_register>, <bit>'. Example: BSF 0x06, 3".to_string())
+            }
+            "BTFSC" => Some(
+                "\nHint: Use 'BTFSC <file_register>, <bit>'. Example: BTFSC 0x05, 2".to_string(),
+            ),
+
+            // Literal and Control Operations
+            "MOVLW" => Some("\nHint: Use 'MOVLW <literal>'. Example: MOVLW 0x55".to_string()),
+            "CALL" => Some("\nHint: Use 'CALL <address>'. Example: CALL 0x200".to_string()),
+            "GOTO" => Some("\nHint: Use 'GOTO <address>'. Example: GOTO 0x300".to_string()),
+
+            // Control Instructions (No operands)
+            "RETURN" | "NOP" | "SLEEP" | "CLRWDT" => Some(format!(
+                "\nHint: '{}' does not require any operands.",
+                instruction
+            )),
+
+            // Default case for unknown instructions
+            _ => None,
+        }
+    }
+
+    fn match_tokens_len(tokens: &[&str]) -> Option<usize> {
+        match tokens[0].to_uppercase().as_str() {
+            // Byte-oriented File Register Operations
+            "MOVWF" | "CLRF" | "CLRW" | "NOP" => Some(2),
+            "ADDWF" | "ANDWF" | "RLF" | "RRF" | "DECFSZ" | "INCFSZ" | "XORWF" | "IORWF"
+            | "COMF" | "DECF" | "SUBWF" | "SWAPF" | "INCF" => Some(3),
+
+            // Bit-oriented File Register Operations
+            "BSF" | "BCF" | "BTFSC" | "BTFSS" => Some(3),
+
+            // Literal and Control Operations
+            "MOVLW" | "ADDLW" | "ANDLW" | "IORLW" | "XORLW" | "SUBLW" | "RETLW" | "CALL"
+            | "GOTO" => Some(2),
+            "RETURN" | "RETFIE" | "CLRWDT" | "SLEEP" => Some(1),
+
+            _ => None,
+        }
+    }
+
+    fn check_arg(tokens: &[&str], line: usize) -> Result<(), ParseError> {
+        if let Some(expected_len) = Self::match_tokens_len(tokens) {
+            if tokens.len() != expected_len {
+                return Err(ParseError::ArgumentCountMismatch(
+                    tokens[0].to_string(),
+                    line,
+                ));
+            }
+        } else {
+            return Err(ParseError::InvalidInstruction(tokens[0].to_string(), line));
+        }
+        Ok(())
     }
 }
